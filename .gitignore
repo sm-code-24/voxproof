@@ -36,9 +36,10 @@ env/
 .env
 
 # Model weights (large files - download separately)
-model/*.pth
-model/classifier_best.pth
-model/classifier.pth
+# Uncomment below if you want to exclude model weights from git
+# model/*.pth
+# model/classifier_best.pth
+# model/classifier.pth
 
 # HuggingFace cache (can be large)
 .cache/
@@ -47,6 +48,17 @@ model/classifier.pth
 # Logs
 *.log
 logs/
+
+# Deprecated deployment files (Railway is primary)
+Procfile
+render.yaml
+
+# PDF documents (not needed in repo)
+*.pdf
+
+# Training data (too large for git)
+training_data/
+datasets/
 
 # OS
 .DS_Store
@@ -63,8 +75,7 @@ htmlcov/
 *.cover
 .hypothesis/
 
-# Temporary/personal test files (keep official test files like test_client.py)
-test_api_quick.py
+# Temporary test files
 test_*.local.py
 *_test_temp.py
 scratch_*.py
@@ -72,54 +83,52 @@ debug_*.py
 temp_test_*.py
 my_test_*.py
 
+# Test results output
+results/
+
 # Temporary files
 tmp/
 temp/
 *.tmp
 *.bak
-*.swp
 
-# Audio test files (if you add samples)
+# Audio test files (samples folder)
 audio_samples/
 test_audio/
 *.wav
-*.mp3
-*.m4a
 *.flac
 *.ogg
 
-# Jupyter Notebooks (if added later)
+# Jupyter Notebooks
 *.ipynb_checkpoints
 .ipynb_checkpoints/
 
-# MyPy type checker
+# MyPy
 .mypy_cache/
 .dmypy.json
 dmypy.json
 
-# Database files (if added)
+# Database files
 *.db
 *.sqlite
 *.sqlite3
 
-# Compiled C extensions (if any)
-*.so
+# Compiled extensions
 *.dylib
 *.dll
 
 # Package distribution
-*.egg
 MANIFEST
 
 # PyInstaller
 *.manifest
 *.spec
 
-# Celery (if used)
+# Celery
 celerybeat-schedule
 celerybeat.pid
 
-# Environments
+# Environment variants
 .env.local
 .env.*.local
 

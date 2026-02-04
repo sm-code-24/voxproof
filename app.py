@@ -30,8 +30,10 @@ logger = logging.getLogger(__name__)
 
 # Reduce noise from external libraries
 logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
-logging.getLogger("transformers").setLevel(logging.WARNING)
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)  # Changed to ERROR
+logging.getLogger("transformers").setLevel(logging.ERROR)  # Changed to ERROR
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("filelock").setLevel(logging.WARNING)
 
 # Import modules
 from audio.processing import get_processor

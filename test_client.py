@@ -5,16 +5,29 @@ Use this to test the voice detection endpoint with sample audio files.
 
 import base64
 import sys
+import os
+import json
+from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
 
 import requests
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Get configuration from environment variables
+API_KEY = os.getenv("API_KEY", "voxproof-secret-key-2024")
+API_URL = os.getenv("API_URL", "http://localhost:8000")
+OUTPUT_DIR = os.getenv("OUTPUT_DIR", "results")
 
 
 def test_voice_detection(
     audio_path: str,
     language: str = "English",
-    api_url: str = "http://localhost:8000",
-    api_key: str = "voxproof-secret-key-2024"
+    api_url: str = None,
+    api_key: str = None,
+    save_json: bool = True
 ):
     """
     Test the voice detection API with an audio file.
@@ -22,9 +35,16 @@ def test_voice_detection(
     Args:
         audio_path: Path to the MP3 audio file
         language: Language of the audio (Tamil, English, Hindi, Malayalam, Telugu)
-        api_url: Base URL of the API
-        api_key: API key for authentication
+        api_url: Base URL of the API (defaults to environment variable)
+        api_key: API key for authentication (defaults to environment variable)
+        save_json: Whether to save results to a JSON file
     """
+    # Use environment variables if not provided
+    if api_url is None:
+        api_url = API_URL
+    if api_key is None:
+        api_key = API_KEY
+    
     # Validate file exists
     audio_file = Path(audio_path)
     if not audio_file.exists():
@@ -71,8 +91,45 @@ def test_voice_detection(
         print(f"Classification: {result['classification']}")
         print(f"Confidence:   {result['confidenceScore']:.2%}")
         print(f"Explanation:  {result['explanation']}")
-        print("=" * 50 + "\n")
+        print("=" * 50)
         
+        # Save results to JSON file (single file, append mode)
+        if save_json:
+            # Create output directory if it doesn't exist
+            output_dir = Path(OUTPUT_DIR)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Single results file
+            output_file = output_dir / "results.json"
+            
+            # Prepare result entry with metadata
+            result_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "input": {
+                    "audio_file": str(Path(audio_path).name),
+                    "audio_size_bytes": len(audio_bytes),
+                    "language": language
+                },
+                "result": result
+            }
+            
+            # Load existing results or create new list
+            if output_file.exists():
+                with open(output_file, "r", encoding="utf-8") as f:
+                    all_results = json.load(f)
+            else:
+                all_results = []
+            
+            # Append new result
+            all_results.append(result_entry)
+            
+            # Save updated results
+            with open(output_file, "w", encoding="utf-8") as f:
+                json.dump(all_results, f, indent=2, ensure_ascii=False)
+            
+            print(f"\n💾 Results saved to: {output_file} ({len(all_results)} total entries)")
+        
+        print()
         return result
         
     except requests.exceptions.ConnectionError:
@@ -88,8 +145,10 @@ def test_voice_detection(
         return None
 
 
-def test_health(api_url: str = "http://localhost:8000"):
+def test_health(api_url: str = None):
     """Test the health endpoint."""
+    if api_url is None:
+        api_url = API_URL
     try:
         response = requests.get(f"{api_url}/health", timeout=5)
         response.raise_for_status()
@@ -105,9 +164,14 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: python test_client.py <audio_file.mp3> [language]")
         print("\nSupported languages: Tamil, English, Hindi, Malayalam, Telugu")
+        print("\nEnvironment Variables (optional):")
+        print(f"  API_KEY: {API_KEY[:20]}..." if len(API_KEY) > 20 else f"  API_KEY: {API_KEY}")
+        print(f"  API_URL: {API_URL}")
+        print(f"  OUTPUT_DIR: {OUTPUT_DIR}")
         print("\nExamples:")
         print("  python test_client.py sample.mp3")
         print("  python test_client.py sample.mp3 Hindi")
+        print("\nResults are appended to 'results/results.json'.")
         sys.exit(1)
     
     audio_path = sys.argv[1]

@@ -22,6 +22,7 @@ License: MIT
 
 import logging
 import os
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -29,7 +30,12 @@ from typing import Optional
 import numpy as np
 import torch
 import torch.nn as nn
+
+# Suppress transformers load report warnings before import
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 from transformers import Wav2Vec2Model, Wav2Vec2Processor
+import transformers
+transformers.logging.set_verbosity_error()
 
 from audio.processing import AudioFeatures
 
@@ -220,7 +226,9 @@ class Wav2VecEmbedder:
             # The processor handles audio preprocessing (normalization, etc.)
             self.processor = Wav2Vec2Processor.from_pretrained(self.model_name)
             
-            # Load the actual model - this is the big download
+            # Load the actual model
+            # We use Wav2Vec2Model (not Wav2Vec2ForCTC) since we only need embeddings
+            # lm_head/masked_spec_embed warnings are expected - we're not doing ASR
             self.model = Wav2Vec2Model.from_pretrained(self.model_name)
             
             # Move to GPU if available
