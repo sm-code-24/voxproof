@@ -247,6 +247,9 @@ def _save_result(
         if output_file.exists():
             with open(output_file, "r", encoding="utf-8") as f:
                 all_results = json.load(f)
+            # Handle case where results.json is a dict (from training script)
+            if isinstance(all_results, dict):
+                all_results = [all_results]
         else:
             all_results = []
         
