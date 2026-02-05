@@ -247,13 +247,13 @@ class ErrorResponse(BaseModel):
 async def lifespan(app: FastAPI):
     """
     Application lifespan handler.
-    Load models at startup, cleanup at shutdown.
+    Startup is fast - models load lazily on first request.
     """
     if not IS_PRODUCTION:
         logger.info("\n" + "=" * 70)
         logger.info("🎙️  VoxProof API - AI Voice Detection System")
         logger.info("=" * 70)
-    logger.info("Starting initialization...")
+    logger.info("Starting server...")
     
     # Create dummy weights if not exists (for demo purposes)
     if not os.path.exists(config.MODEL_PATH):
@@ -261,40 +261,15 @@ async def lifespan(app: FastAPI):
         logger.warning("⚠️  Run 'python train.py' to train with real data!")
         create_dummy_weights(config.MODEL_PATH)
     
-    # Pre-load models at startup
-    logger.info("📦 Loading models...")
-    import time
-    start_time = time.time()
-    
-    try:
-        # Initialize audio processor
-        processor = get_processor(sample_rate=config.SAMPLE_RATE)
-        logger.info("  ✓ Audio processor initialized")
-        
-        # Initialize and load voice detection model
-        model = get_model(
-            classifier_path=config.MODEL_PATH,
-            wav2vec_model_name=config.WAV2VEC_MODEL
-        )
-        model.load()
-        logger.info("  ✓ Voice detection model loaded")
-        
-        # Initialize explanation generator
-        explainer = get_explainer()
-        logger.info("  ✓ Explanation generator initialized")
-        
-        load_time = time.time() - start_time
-        logger.info(f"Models loaded in {load_time:.2f}s")
-        
-    except Exception as e:
-        logger.error(f"Failed to load models: {e}")
-        raise RuntimeError(f"Model initialization failed: {e}")
+    # DON'T load models here - defer to first request for fast healthcheck
+    # Models will be loaded lazily when get_model() and get_processor() are called
     
     if IS_PRODUCTION:
-        logger.info(f"VoxProof API Ready - Model: {config.MODEL_PATH}, Sample Rate: {config.SAMPLE_RATE}Hz")
+        logger.info("VoxProof API Started - Models will load on first request")
     else:
         logger.info("=" * 70)
-        logger.info("✅ VoxProof API Ready!")
+        logger.info("✅ VoxProof API Started!")
+        logger.info("⏳ Models will load on first request (cold start)")
         logger.info(f"🔑 API Key: {'Configured ✓' if config.API_KEY else 'NOT SET ✗'}")
         logger.info(f"🤖 Model: {config.MODEL_PATH}")
         logger.info(f"🎵 Sample Rate: {config.SAMPLE_RATE} Hz")

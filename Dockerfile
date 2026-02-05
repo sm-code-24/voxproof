@@ -42,12 +42,10 @@ COPY utils/ ./utils/
 # Environment
 ENV PYTHONUNBUFFERED=1
 ENV TRANSFORMERS_CACHE=/root/.cache/huggingface
+ENV PRODUCTION=true
 
 EXPOSE 8000
 
-# Use gunicorn with uvicorn workers for production
-# --timeout 120: Worker timeout (kills slow requests)
-# --graceful-timeout 30: Time for graceful shutdown
-# --keep-alive 5: Keep-alive timeout
-# -k uvicorn.workers.UvicornWorker: Use uvicorn's async worker
-CMD gunicorn app:app --bind 0.0.0.0:${PORT:-8000} --workers 1 --timeout 120 --graceful-timeout 30 --keep-alive 5 -k uvicorn.workers.UvicornWorker
+# Use uvicorn directly - simpler and more reliable on Railway
+# --timeout-keep-alive 120: Keep connections alive for slow clients
+CMD uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 120
