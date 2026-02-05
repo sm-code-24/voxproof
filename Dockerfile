@@ -46,6 +46,5 @@ ENV PRODUCTION=true
 
 EXPOSE 8000
 
-# Start uvicorn - railway.json startCommand will override this
-# Using shell form for proper variable expansion
-CMD ["sh", "-c", "echo 'Starting VoxProof server on port ${PORT:-8000}...' && python -m uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 120"]
+# Start server - use shell to expand PORT variable
+CMD sh -c "python -m uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 120"
