@@ -76,7 +76,7 @@ VoxProof/
 
 ```bash
 # Clone and setup
-git clone https://github.com/yourusername/VoxProof.git
+git clone https://github.com/sm-code-24/VoxProof.git
 cd VoxProof
 
 # Install dependencies

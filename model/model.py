@@ -124,29 +124,109 @@ class Wav2VecEmbedder:
 # Custom Voice Classifier (Trainable)
 # ============================================================================
 
+# ============================================================================
+# Improved Building Blocks
+# ============================================================================
+
+class ResidualBlock(nn.Module):
+    """Residual block with batch norm and dropout for better gradient flow."""
+    def __init__(self, in_dim, out_dim, dropout_rate=0.4):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Linear(in_dim, out_dim),
+            nn.BatchNorm1d(out_dim),
+            nn.GELU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(out_dim, out_dim),
+            nn.BatchNorm1d(out_dim),
+        )
+        # Skip connection with projection if dimensions differ
+        self.skip = nn.Linear(in_dim, out_dim) if in_dim != out_dim else nn.Identity()
+        self.activation = nn.GELU()
+        self.dropout = nn.Dropout(dropout_rate)
+    
+    def forward(self, x):
+        return self.dropout(self.activation(self.block(x) + self.skip(x)))
+
+
 class VoiceClassifier(nn.Module):
     """
-    Custom PyTorch classifier for AI voice detection.
+    Improved PyTorch classifier for AI voice detection.
     
-    This is the ONLY component that makes the AI/Human decision.
+    Uses residual connections and GELU activation for better training.
     
-    Input: 786 dimensions
+    Input: 798 dimensions
         - 768: Wav2Vec2 embeddings (deep audio features)
-        - 18: Acoustic features (pitch, MFCC, spectral, etc.)
+        - 30: Acoustic features (pitch, MFCC, spectral, etc.)
         
     Output: Single logit (apply sigmoid for probability)
     """
     
-    ACOUSTIC_FEATURES_DIM = 18
+    ACOUSTIC_FEATURES_DIM = 30
     WAV2VEC_EMBEDDING_DIM = 768
-    INPUT_DIM = ACOUSTIC_FEATURES_DIM + WAV2VEC_EMBEDDING_DIM  # 786
+    INPUT_DIM = ACOUSTIC_FEATURES_DIM + WAV2VEC_EMBEDDING_DIM  # 798
     
-    def __init__(self, dropout_rate: float = 0.3):
+    def __init__(self, dropout_rate: float = 0.4):
+        super().__init__()
+        
+        # Input projection
+        self.input_proj = nn.Sequential(
+            nn.Linear(self.INPUT_DIM, 512),
+            nn.BatchNorm1d(512),
+            nn.GELU(),
+            nn.Dropout(dropout_rate),
+        )
+        
+        # Residual blocks for better gradient flow
+        self.res1 = ResidualBlock(512, 512, dropout_rate)
+        self.res2 = ResidualBlock(512, 256, dropout_rate)
+        self.res3 = ResidualBlock(256, 128, dropout_rate)
+        
+        # Output head
+        self.head = nn.Sequential(
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.GELU(),
+            nn.Dropout(dropout_rate / 2),
+            nn.Linear(64, 1),
+        )
+        
+        # Initialize weights properly
+        self._init_weights()
+    
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass returning raw logits."""
+        x = self.input_proj(x)
+        x = self.res1(x)
+        x = self.res2(x)
+        x = self.res3(x)
+        return self.head(x)
+    
+    def predict(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass with sigmoid activation."""
+        logits = self.forward(x)
+        return torch.sigmoid(logits)
+
+
+# Legacy classifier for backward compatibility
+class VoiceClassifierLegacy(nn.Module):
+    """Legacy classifier (786 dims). Keep for loading old models."""
+    
+    def __init__(self, input_dim: int = 786, dropout_rate: float = 0.3):
         super().__init__()
         
         self.network = nn.Sequential(
-            # Input layer: 786 → 512
-            nn.Linear(self.INPUT_DIM, 512),
+            nn.Linear(input_dim, 512),
             nn.BatchNorm1d(512),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
@@ -176,11 +256,6 @@ class VoiceClassifier(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass returning raw logits."""
         return self.network(x)
-    
-    def predict(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass with sigmoid activation."""
-        logits = self.forward(x)
-        return torch.sigmoid(logits)
 
 
 # ============================================================================
@@ -276,22 +351,10 @@ class VoiceDetectionModel:
         """
         Convert AudioFeatures dataclass to numpy array.
         
-        Returns: 18-dimensional feature vector
+        Returns: 30-dimensional feature vector
         """
-        # Extract 13 MFCCs
-        mfcc_features = list(acoustic_features.mfcc_mean)  # Array of 13 floats
-        
-        # Extract 5 additional features
-        additional_features = [
-            acoustic_features.pitch_mean,
-            acoustic_features.pitch_std,
-            acoustic_features.spectral_rolloff_mean,
-            acoustic_features.zero_crossing_rate_mean,
-            acoustic_features.duration,
-        ]
-        
-        # Combine: 13 MFCCs + 5 additional = 18 features
-        return np.array(mfcc_features + additional_features, dtype=np.float32)
+        # Use the new to_vector method which returns all 30 features
+        return acoustic_features.to_vector().astype(np.float32)
     
     @torch.no_grad()
     def predict(
@@ -315,16 +378,16 @@ class VoiceDetectionModel:
             self.load()
             
         try:
-            # Step 1: Prepare acoustic features (18 dims)
+            # Step 1: Prepare acoustic features (30 dims)
             acoustic_vector = self._prepare_acoustic_features(acoustic_features)
             
             # Step 2: Extract Wav2Vec2 embeddings (768 dims)
             wav2vec_embedding = self.embedder.extract_embedding(waveform, sample_rate)
             
-            # Step 3: Concatenate features (786 dims total)
+            # Step 3: Concatenate features (798 dims total)
             # Order must match training: acoustic first, then wav2vec
             combined_features = np.concatenate([
-                acoustic_vector,     # 18 dims
+                acoustic_vector,     # 30 dims
                 wav2vec_embedding    # 768 dims
             ])
             
@@ -342,13 +405,20 @@ class VoiceDetectionModel:
             logits = self.classifier(features_tensor)
             probability = torch.sigmoid(logits).item()
             
-            # Step 5: Apply threshold
+            # Step 6: Apply threshold and calculate confidence
             is_ai = probability > 0.5
             classification = "AI_GENERATED" if is_ai else "HUMAN"
             
-            # Confidence is how far from the decision boundary
-            confidence = abs(probability - 0.5) * 2
-            confidence = max(0.51, min(0.99, confidence + 0.5))  # Scale to reasonable range
+            # Confidence is the raw probability for the predicted class
+            # If predicting AI (prob > 0.5), confidence = probability
+            # If predicting HUMAN (prob <= 0.5), confidence = 1 - probability
+            if is_ai:
+                confidence = probability
+            else:
+                confidence = 1.0 - probability
+            
+            # Clamp to reasonable range
+            confidence = max(0.50, min(0.99, confidence))
             
             return PredictionResult(
                 classification=classification,
@@ -450,7 +520,7 @@ def predict(model: VoiceClassifier, features: np.ndarray) -> float:
     
     Args:
         model: Trained VoiceClassifier
-        features: Combined feature vector (786 dims: 18 acoustic + 768 wav2vec)
+        features: Combined feature vector (798 dims: 30 acoustic + 768 wav2vec)
         
     Returns:
         Probability that the audio is AI-generated (0.0 to 1.0)

@@ -38,43 +38,82 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AudioFeatures:
     """
-    Container for extracted acoustic features.
+    Container for extracted acoustic features (30 total).
     
-    These features are "hand-crafted" - designed by audio researchers over decades.
-    They capture different aspects of how voice sounds:
+    These features are specifically designed to detect AI-generated voices:
     
-    - MFCCs: The "timbre" or tonal quality (what makes voices sound different)
-    - Pitch: How high/low the voice is, and how much it varies
-    - Spectral Rolloff: Where most of the audio energy is concentrated
-    - Zero Crossing Rate: How "noisy" or "clean" the signal is
+    - MFCCs (13): Timbre characteristics
+    - MFCC Delta stats (5): Temporal dynamics (AI is too smooth)
+    - Pitch stats (4): Mean, std, range, jitter (AI has unnatural patterns)
+    - Spectral features (4): Centroid, rolloff, bandwidth, contrast
+    - Energy features (2): RMS mean and variance
+    - Zero crossing rate (2): Mean and variance
     
-    For AI detection, the KEY insight is that synthetic voices often have:
-    - Unnaturally stable pitch (robotic monotone)
-    - Suspiciously clean signals (no breath noise, room reverb)
-    - Unusual spectral characteristics (over-processed)
+    Key AI detection insights:
+    - AI voices have unnaturally stable pitch (low jitter)
+    - AI voices lack micro-variations in energy
+    - AI voices have suspiciously smooth MFCC transitions
     """
-    mfcc_mean: np.ndarray          # 13 MFCC coefficients (averaged over time)
-    pitch_mean: float               # Average fundamental frequency (Hz)
-    pitch_std: float                # How much pitch varies (low = robotic)
-    spectral_rolloff_mean: float    # Frequency below which 85% of energy lies
-    zero_crossing_rate_mean: float  # Rate of sign changes (high = noisy)
-    duration: float                 # Length in seconds
+    # MFCCs (13 features)
+    mfcc_mean: np.ndarray
+    
+    # MFCC Delta statistics (5 features) 
+    mfcc_delta_mean: float
+    mfcc_delta_std: float
+    mfcc_delta_max: float
+    mfcc_delta_p90: float
+    mfcc_acceleration: float
+    
+    # Pitch statistics (4 features)
+    pitch_mean: float
+    pitch_std: float
+    pitch_range: float
+    pitch_jitter: float  # Key AI detector!
+    
+    # Spectral features (4 features)
+    spectral_centroid_mean: float
+    spectral_rolloff_mean: float
+    spectral_bandwidth_mean: float
+    spectral_contrast_mean: float
+    
+    # Energy features (2 features)
+    rms_mean: float
+    rms_var: float
+    
+    # Zero crossing rate (2 features)
+    zcr_mean: float
+    zcr_var: float
     
     def to_vector(self) -> np.ndarray:
         """
         Flatten all features into a single numpy array.
-        
-        This is what gets fed to the neural network classifier.
-        Total dimensions: 13 (MFCCs) + 5 (others) = 18
+        Total dimensions: 13 + 5 + 4 + 4 + 2 + 2 = 30
         """
         return np.concatenate([
-            self.mfcc_mean,
+            self.mfcc_mean,  # 13
             np.array([
+                # MFCC delta stats (5)
+                self.mfcc_delta_mean,
+                self.mfcc_delta_std,
+                self.mfcc_delta_max,
+                self.mfcc_delta_p90,
+                self.mfcc_acceleration,
+                # Pitch stats (4)
                 self.pitch_mean,
                 self.pitch_std,
+                self.pitch_range,
+                self.pitch_jitter,
+                # Spectral features (4)
+                self.spectral_centroid_mean,
                 self.spectral_rolloff_mean,
-                self.zero_crossing_rate_mean,
-                self.duration
+                self.spectral_bandwidth_mean,
+                self.spectral_contrast_mean,
+                # Energy features (2)
+                self.rms_mean,
+                self.rms_var,
+                # ZCR features (2)
+                self.zcr_mean,
+                self.zcr_var,
             ])
         ])
 
@@ -257,87 +296,101 @@ class AudioProcessor:
     
     def extract_features(self, waveform: np.ndarray) -> AudioFeatures:
         """
-        Extract hand-crafted acoustic features from the waveform.
+        Extract 30 acoustic features specifically designed to detect AI voices.
         
-        These features capture different aspects of voice quality:
-        
-        1. MFCCs (Mel-Frequency Cepstral Coefficients)
-           - The "fingerprint" of how a voice sounds
-           - Based on how humans perceive different frequencies
-           - 13 coefficients is standard for speech
-        
-        2. Pitch (F0 - Fundamental Frequency)
-           - How high or low the voice is
-           - mean: Average pitch (Hz)
-           - std: How much it varies (KEY for AI detection!)
-        
-        3. Spectral Rolloff
-           - Frequency below which 85% of the energy is contained
-           - Low = mostly low frequencies (muffled)
-           - High = lots of high frequency content (bright/harsh)
-        
-        4. Zero Crossing Rate
-           - How often the signal crosses zero
-           - Higher = noisier signal (breath, room noise)
-           - Very low = suspiciously clean (synthetic?)
+        AI voices typically have:
+        - Too stable pitch (low pitch variance, low jitter)
+        - Unnatural spectral patterns
+        - Missing breath sounds and micro-variations  
+        - Over-smooth formant transitions (low MFCC delta variance)
+        - Lack of natural room acoustics
         
         Args:
             waveform: Preprocessed audio (16kHz, normalized)
             
         Returns:
-            AudioFeatures dataclass with all extracted features
+            AudioFeatures dataclass with 30 extracted features
         """
         try:
-            # MFCCs - Mel-frequency cepstral coefficients
-            mfccs = librosa.feature.mfcc(
-                y=waveform, 
-                sr=self.target_sample_rate, 
-                n_mfcc=13
-            )
+            sr = self.target_sample_rate
+            
+            # 1. MFCCs (13 features) - Core timbre representation
+            mfccs = librosa.feature.mfcc(y=waveform, sr=sr, n_mfcc=13)
             mfcc_mean = np.mean(mfccs, axis=1)
             
-            # Pitch (F0) extraction using pyin
-            f0, voiced_flag, voiced_probs = librosa.pyin(
-                waveform,
-                fmin=librosa.note_to_hz('C2'),
-                fmax=librosa.note_to_hz('C7'),
-                sr=self.target_sample_rate
-            )
+            # 2. MFCC Delta statistics (5 features) - Temporal dynamics
+            # AI voices often have smoother transitions
+            mfcc_delta = librosa.feature.delta(mfccs)
+            mfcc_delta_mean = float(np.mean(np.abs(mfcc_delta)))
+            mfcc_delta_std = float(np.std(mfcc_delta))
+            mfcc_delta_max = float(np.max(np.abs(mfcc_delta)))
+            mfcc_delta_p90 = float(np.percentile(np.abs(mfcc_delta), 90))
+            mfcc_acceleration = float(np.mean(np.diff(mfcc_delta, axis=1) ** 2))
             
-            # Filter out unvoiced frames and NaN values
-            f0_valid = f0[~np.isnan(f0)]
-            if len(f0_valid) > 0:
-                pitch_mean = float(np.mean(f0_valid))
-                pitch_std = float(np.std(f0_valid))
-            else:
-                pitch_mean = 0.0
-                pitch_std = 0.0
+            # 3. Pitch features (4 features) - AI voices have unnatural pitch patterns
+            try:
+                f0, voiced_flag, voiced_probs = librosa.pyin(
+                    waveform,
+                    fmin=librosa.note_to_hz('C2'),
+                    fmax=librosa.note_to_hz('C7'),
+                    sr=sr
+                )
+                f0_valid = f0[~np.isnan(f0)]
+                if len(f0_valid) > 2:
+                    pitch_mean = float(np.mean(f0_valid))
+                    pitch_std = float(np.std(f0_valid))
+                    pitch_range = float(np.ptp(f0_valid))  # Peak-to-peak range
+                    # Jitter: pitch period-to-period variation (KEY AI detector!)
+                    pitch_diff = np.abs(np.diff(f0_valid))
+                    pitch_jitter = float(np.mean(pitch_diff) / (pitch_mean + 1e-8))
+                else:
+                    pitch_mean, pitch_std, pitch_range, pitch_jitter = 0.0, 0.0, 0.0, 0.0
+            except:
+                pitch_mean, pitch_std, pitch_range, pitch_jitter = 0.0, 0.0, 0.0, 0.0
             
-            # Spectral rolloff - frequency below which 85% of energy is contained
-            spectral_rolloff = librosa.feature.spectral_rolloff(
-                y=waveform, 
-                sr=self.target_sample_rate,
-                roll_percent=0.85
-            )
+            # 4. Spectral features (4 features) - Frequency characteristics
+            spectral_centroid = librosa.feature.spectral_centroid(y=waveform, sr=sr)
+            spectral_rolloff = librosa.feature.spectral_rolloff(y=waveform, sr=sr, roll_percent=0.85)
+            spectral_bandwidth = librosa.feature.spectral_bandwidth(y=waveform, sr=sr)
+            spectral_contrast = librosa.feature.spectral_contrast(y=waveform, sr=sr)
+            
+            spectral_centroid_mean = float(np.mean(spectral_centroid))
             spectral_rolloff_mean = float(np.mean(spectral_rolloff))
+            spectral_bandwidth_mean = float(np.mean(spectral_bandwidth))
+            spectral_contrast_mean = float(np.mean(spectral_contrast))
             
-            # Zero crossing rate - measure of noisiness
+            # 5. Energy features (2 features) - Signal power characteristics
+            rms = librosa.feature.rms(y=waveform)
+            rms_mean = float(np.mean(rms))
+            rms_var = float(np.var(rms))  # Energy variance - humans have more variation
+            
+            # 6. Zero crossing rate (2 features) - Noisiness indicator
             zcr = librosa.feature.zero_crossing_rate(waveform)
             zcr_mean = float(np.mean(zcr))
-            
-            # Duration in seconds
-            duration = len(waveform) / self.target_sample_rate
+            zcr_var = float(np.var(zcr))
             
             features = AudioFeatures(
                 mfcc_mean=mfcc_mean,
+                mfcc_delta_mean=mfcc_delta_mean,
+                mfcc_delta_std=mfcc_delta_std,
+                mfcc_delta_max=mfcc_delta_max,
+                mfcc_delta_p90=mfcc_delta_p90,
+                mfcc_acceleration=mfcc_acceleration,
                 pitch_mean=pitch_mean,
                 pitch_std=pitch_std,
+                pitch_range=pitch_range,
+                pitch_jitter=pitch_jitter,
+                spectral_centroid_mean=spectral_centroid_mean,
                 spectral_rolloff_mean=spectral_rolloff_mean,
-                zero_crossing_rate_mean=zcr_mean,
-                duration=duration
+                spectral_bandwidth_mean=spectral_bandwidth_mean,
+                spectral_contrast_mean=spectral_contrast_mean,
+                rms_mean=rms_mean,
+                rms_var=rms_var,
+                zcr_mean=zcr_mean,
+                zcr_var=zcr_var,
             )
             
-            logger.debug(f"Features extracted - Pitch: {pitch_mean:.0f}Hz ±{pitch_std:.0f}, ZCR: {zcr_mean:.3f}, Duration: {duration:.1f}s")
+            logger.debug(f"Features extracted - Pitch: {pitch_mean:.0f}Hz, Jitter: {pitch_jitter:.4f}, ZCR: {zcr_mean:.3f}")
             return features
             
         except Exception as e:

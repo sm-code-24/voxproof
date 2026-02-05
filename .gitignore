@@ -169,3 +169,5 @@ checkpoints/
 
 # Test results
 results/
+
+audio_base64.txt
