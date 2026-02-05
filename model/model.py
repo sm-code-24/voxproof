@@ -21,7 +21,7 @@ import os
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -29,9 +29,21 @@ import torch.nn as nn
 
 # Suppress transformers warnings
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
-from transformers import Wav2Vec2Model, Wav2Vec2Processor
-import transformers
-transformers.logging.set_verbosity_error()
+
+# Lazy import transformers to speed up startup
+Wav2Vec2Model = None
+Wav2Vec2Processor = None
+
+def _load_transformers():
+    """Lazily load transformers to speed up startup."""
+    global Wav2Vec2Model, Wav2Vec2Processor
+    if Wav2Vec2Model is None:
+        import transformers
+        transformers.logging.set_verbosity_error()
+        from transformers import Wav2Vec2Model as _Wav2Vec2Model
+        from transformers import Wav2Vec2Processor as _Wav2Vec2Processor
+        Wav2Vec2Model = _Wav2Vec2Model
+        Wav2Vec2Processor = _Wav2Vec2Processor
 
 from audio.processing import AudioFeatures
 
@@ -67,14 +79,17 @@ class Wav2VecEmbedder:
     def __init__(self, model_name: str = "facebook/wav2vec2-base-960h"):
         self.model_name = model_name
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.processor: Optional[Wav2Vec2Processor] = None
-        self.model: Optional[Wav2Vec2Model] = None
+        self.processor = None  # Lazy loaded
+        self.model = None  # Lazy loaded
         self._loaded = False
         
     def load(self) -> None:
         """Load the pretrained model (lazy loading)."""
         if self._loaded:
             return
+        
+        # Lazy load transformers
+        _load_transformers()
             
         logger.info(f"Loading Wav2Vec2 embedder: {self.model_name}")
         self.processor = Wav2Vec2Processor.from_pretrained(self.model_name)

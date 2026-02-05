@@ -46,6 +46,6 @@ ENV PRODUCTION=true
 
 EXPOSE 8000
 
-# Use uvicorn directly - simpler and more reliable on Railway
-# --timeout-keep-alive 120: Keep connections alive for slow clients
-CMD uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 120
+# Start uvicorn - railway.json startCommand will override this
+# Using shell form for proper variable expansion
+CMD ["sh", "-c", "echo 'Starting VoxProof server on port ${PORT:-8000}...' && python -m uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 120"]

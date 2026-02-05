@@ -3,11 +3,14 @@ VoxProof - AI Voice Detection API
 FastAPI entry point for detecting AI-generated vs human voice samples.
 """
 
+# Immediate startup log for debugging Railway
+import sys
+print("VoxProof: Starting application...", file=sys.stdout, flush=True)
+
 import asyncio
 import concurrent.futures
 import logging
 import os
-import sys
 from contextlib import asynccontextmanager
 from enum import Enum
 from typing import Literal, Optional
@@ -94,9 +97,11 @@ class Config:
 
 config = Config()
 
-# Validate required configuration
+# Log API key status (don't crash if missing - just warn)
 if not config.API_KEY:
-    raise ValueError("ERROR: API_KEY environment variable is required. Please set it in .env file.")
+    logger.warning("⚠️  API_KEY not set - API authentication will fail!")
+else:
+    logger.info("✓ API_KEY configured")
 
 
 # ============================================================================
