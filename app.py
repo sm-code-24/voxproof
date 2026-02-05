@@ -3,6 +3,8 @@ VoxProof - AI Voice Detection API
 FastAPI entry point for detecting AI-generated vs human voice samples.
 """
 
+import asyncio
+import concurrent.futures
 import logging
 import os
 import sys
@@ -11,9 +13,11 @@ from enum import Enum
 from typing import Literal, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
+from starlette.middleware.base import BaseHTTPMiddleware
 
 # Load environment variables
 load_dotenv()
@@ -328,6 +332,41 @@ app.add_middleware(
 
 
 # ============================================================================
+# Request Timeout Middleware
+# ============================================================================
+
+REQUEST_TIMEOUT = 90  # 90 second timeout for requests
+
+
+class TimeoutMiddleware(BaseHTTPMiddleware):
+    """Middleware to add timeout to requests."""
+    
+    async def dispatch(self, request: Request, call_next):
+        try:
+            return await asyncio.wait_for(
+                call_next(request),
+                timeout=REQUEST_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"Request timeout after {REQUEST_TIMEOUT}s: {request.url.path}")
+            return JSONResponse(
+                status_code=504,
+                content={
+                    "status": "error",
+                    "message": "Request processing timeout",
+                    "detail": f"Request took longer than {REQUEST_TIMEOUT} seconds. Try with shorter audio."
+                }
+            )
+
+
+app.add_middleware(TimeoutMiddleware)
+
+
+# Thread pool for CPU-intensive operations
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
+
+# ============================================================================
 # Dependencies
 # ============================================================================
 
@@ -408,21 +447,29 @@ async def voice_detection(
         )
         explainer = get_explainer()
         
-        # Step 1: Process audio
-        logger.debug(f"[{request_id}] Processing audio...")
-        waveform = processor.process_audio(request.audioBase64)
+        # Define the CPU-intensive work
+        def process_and_predict():
+            # Step 1: Process audio
+            logger.debug(f"[{request_id}] Processing audio...")
+            waveform = processor.process_audio(request.audioBase64)
+            
+            # Step 2: Extract acoustic features  
+            logger.debug(f"[{request_id}] Extracting features...")
+            features = processor.extract_features(waveform)
+            
+            # Step 3: Run model inference
+            logger.debug(f"[{request_id}] Running AI detection...")
+            prediction = model.predict(
+                waveform=waveform,
+                acoustic_features=features,
+                sample_rate=config.SAMPLE_RATE
+            )
+            
+            return features, prediction
         
-        # Step 2: Extract acoustic features
-        logger.debug(f"[{request_id}] Extracting features...")
-        features = processor.extract_features(waveform)
-        
-        # Step 3: Run model inference
-        logger.debug(f"[{request_id}] Running AI detection...")
-        prediction = model.predict(
-            waveform=waveform,
-            acoustic_features=features,
-            sample_rate=config.SAMPLE_RATE
-        )
+        # Run CPU-intensive work in thread pool (non-blocking)
+        loop = asyncio.get_event_loop()
+        features, prediction = await loop.run_in_executor(_executor, process_and_predict)
         
         # Step 4: Generate explanation
         explanation = explainer.generate_explanation(features, prediction)

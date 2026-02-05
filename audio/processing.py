@@ -118,6 +118,11 @@ class AudioFeatures:
         ])
 
 
+# Maximum audio duration in seconds (longer audio is truncated to prevent timeout)
+# Railway free tier has 30s timeout, so we limit to 15s to ensure processing completes
+MAX_AUDIO_DURATION = 15  # 15 seconds max for reliable processing on CPU
+
+
 class AudioProcessor:
     """
     The audio preprocessing pipeline.
@@ -133,7 +138,8 @@ class AudioProcessor:
         Base64 string -> MP3 bytes -> Raw samples -> 16kHz mono -> Normalized -> Features
     """
     
-    def __init__(self, target_sample_rate: int = 16000):
+    def __init__(self, target_sample_rate: int = 16000, max_duration: float = MAX_AUDIO_DURATION):
+        self.max_duration = max_duration
         """
         Initialize the audio processor.
         
@@ -143,7 +149,8 @@ class AudioProcessor:
                                (Higher = more detail but more computation)
         """
         self.target_sample_rate = target_sample_rate
-        logger.debug(f"AudioProcessor initialized (target: {target_sample_rate}Hz)")
+        self.max_samples = int(self.max_duration * target_sample_rate)
+        logger.debug(f"AudioProcessor initialized (target: {target_sample_rate}Hz, max: {self.max_duration}s)")
     
     def decode_base64(self, audio_base64: str) -> bytes:
         """
@@ -289,6 +296,13 @@ class AudioProcessor:
             padding = min_samples - len(waveform)
             waveform = np.pad(waveform, (0, padding), mode='constant')
             logger.warning(f"Audio too short! Padded to {len(waveform)} samples")
+        
+        # Step 6: Truncate long audio to prevent timeout
+        # Wav2Vec2 is slow on CPU for long audio
+        if len(waveform) > self.max_samples:
+            original_duration = len(waveform) / self.target_sample_rate
+            waveform = waveform[:self.max_samples]
+            logger.info(f"Audio truncated from {original_duration:.1f}s to {self.max_duration:.1f}s for faster processing")
         
         duration = len(waveform) / self.target_sample_rate
         logger.debug(f"Audio processed: {duration:.2f}s, {len(waveform):,} samples @ {self.target_sample_rate}Hz")

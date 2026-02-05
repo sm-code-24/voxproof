@@ -92,7 +92,9 @@ class Wav2VecEmbedder:
     @torch.no_grad()
     def extract_embedding(self, waveform: np.ndarray, sample_rate: int = 16000) -> np.ndarray:
         """
-        Extract embedding from audio waveform.
+        Extract embedding from audio waveform with optimized chunked processing.
+        
+        For long audio, processes in chunks and averages embeddings for speed.
         
         Args:
             waveform: Audio samples as numpy array
@@ -103,7 +105,39 @@ class Wav2VecEmbedder:
         """
         if not self._loaded:
             self.load()
+        
+        # Chunk size: 10 seconds of audio at 16kHz for faster processing
+        chunk_size = 10 * sample_rate  # 160,000 samples
+        
+        # If audio is short enough, process directly
+        if len(waveform) <= chunk_size:
+            return self._extract_single_embedding(waveform, sample_rate)
+        
+        # For longer audio, process in chunks and average
+        embeddings = []
+        num_chunks = (len(waveform) + chunk_size - 1) // chunk_size
+        
+        for i in range(num_chunks):
+            start = i * chunk_size
+            end = min(start + chunk_size, len(waveform))
+            chunk = waveform[start:end]
             
+            # Skip very short chunks
+            if len(chunk) < sample_rate:  # Less than 1 second
+                continue
+                
+            emb = self._extract_single_embedding(chunk, sample_rate)
+            embeddings.append(emb)
+        
+        # Average all chunk embeddings
+        if embeddings:
+            return np.mean(embeddings, axis=0)
+        else:
+            return self._extract_single_embedding(waveform[:chunk_size], sample_rate)
+    
+    @torch.no_grad()
+    def _extract_single_embedding(self, waveform: np.ndarray, sample_rate: int) -> np.ndarray:
+        """Extract embedding from a single chunk of audio."""
         # Process audio
         inputs = self.processor(
             waveform, 

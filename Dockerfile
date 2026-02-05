@@ -45,6 +45,9 @@ ENV TRANSFORMERS_CACHE=/root/.cache/huggingface
 
 EXPOSE 8000
 
-# Use shell form to expand PORT variable from Railway
-# Added timeout-keep-alive for slower connections
-CMD uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 120
+# Use gunicorn with uvicorn workers for production
+# --timeout 120: Worker timeout (kills slow requests)
+# --graceful-timeout 30: Time for graceful shutdown
+# --keep-alive 5: Keep-alive timeout
+# -k uvicorn.workers.UvicornWorker: Use uvicorn's async worker
+CMD gunicorn app:app --bind 0.0.0.0:${PORT:-8000} --workers 1 --timeout 120 --graceful-timeout 30 --keep-alive 5 -k uvicorn.workers.UvicornWorker
